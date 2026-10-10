@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.TokenPrinter" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#FF1B1B1F</item>
+        <item name="android:statusBarColor">#FF1B1B1F</item>
+        <item name="android:navigationBarColor">#FF1B1B1F</item>
+    </style>
+</resources>
