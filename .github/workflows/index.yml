@@ -1,0 +1,33 @@
+name: Índice de tokens
+
+# Genera tokens.json.gz desde el bulk de Scryfall y lo publica en el release fijo "index",
+# que la app descarga al iniciar (si su copia tiene más de 24 h).
+on:
+  schedule:
+    - cron: "30 6 * * *" # diario, después de la actualización del bulk de Scryfall
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generar índice
+        run: python scripts/build_index.py tokens.json.gz && ls -l tokens.json.gz
+
+      - name: Publicar en el release "index"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view index >/dev/null 2>&1 || gh release create index \
+            --title "Índice de tokens" --notes "Índice que descarga la app. Se actualiza solo cada día." \
+            --prerelease --latest=false
+          gh release upload index tokens.json.gz --clobber

@@ -37,7 +37,8 @@ object Scryfall {
 
     private class NotFound : Exception()
 
-    private fun open(url: String): HttpURLConnection =
+    /** Toda request lleva User-Agent propio (el CDN de Scryfall responde 400 al de OkHttp). */
+    fun open(url: String): HttpURLConnection =
         (URL(url).openConnection() as HttpURLConnection).apply {
             setRequestProperty("User-Agent", "TokenPrinter/1.0")
             setRequestProperty("Accept", "application/json;q=0.9,*/*;q=0.8")
@@ -64,10 +65,12 @@ object Scryfall {
     fun freshness(): String {
         val data = getJson(searchUrl(BASE, "&order=released&dir=desc&unique=prints"))
         val newest = data.optJSONArray("data")?.optJSONObject(0) ?: return DEFAULT_STATUS
-        val total = NumberFormat.getIntegerInstance(Locale("es", "CL")).format(data.optInt("total_cards"))
-        return "$DEFAULT_STATUS\nCatálogo: $total tokens/emblemas — última edición: " +
-            "${newest.optString("set_name")} (${newest.optString("released_at")})"
+        return catalogStatus(data.optInt("total_cards"), newest.optString("set_name"), newest.optString("released_at"))
     }
+
+    fun catalogStatus(total: Int, setName: String, releasedAt: String) =
+        "$DEFAULT_STATUS\nCatálogo: ${NumberFormat.getIntegerInstance(Locale("es", "CL")).format(total)} " +
+            "tokens/emblemas — última edición: $setName ($releasedAt)"
 
     /** Las dos consultas van en paralelo; la de reminder es opcional y no bloquea si falla. */
     suspend fun search(q: String): List<TokenEntry> = coroutineScope {

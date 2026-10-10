@@ -168,7 +168,10 @@ fun App() {
         status = "Buscando..."
         results = emptyList()
         try {
-            val r = withContext(Dispatchers.IO) { Scryfall.search(q) }
+            // Índice local si está; en vivo si no hay índice o si la consulta usa sintaxis de Scryfall (t:, c:...)
+            val r = withContext(Dispatchers.IO) {
+                (if (':' in q) null else TokenIndex.search(q)) ?: Scryfall.search(q)
+            }
             results = r
             status = when (r.size) {
                 0 -> "Sin resultados para \"$q\"."
@@ -183,15 +186,19 @@ fun App() {
     }
 
     LaunchedEffect(Unit) {
-        status = withContext(Dispatchers.IO) {
-            runCatching { Scryfall.freshness() }.getOrDefault(Scryfall.DEFAULT_STATUS)
-        }
+        withContext(Dispatchers.IO) { TokenIndex.load(ctx) }
+        TokenIndex.freshness()?.let { status = it }
+        // Actualiza el índice si tiene más de 24 h (o no existe); si falla, sigue con la copia anterior o en vivo
+        withContext(Dispatchers.IO) { runCatching { TokenIndex.refreshIfStale(ctx) } }
+        val fresh = TokenIndex.freshness()
+            ?: withContext(Dispatchers.IO) { runCatching { Scryfall.freshness() }.getOrDefault(Scryfall.DEFAULT_STATUS) }
+        if (lastSearched.isEmpty()) status = fresh // no pisar el resultado de una búsqueda ya hecha
     }
-    // Búsqueda mientras escribe (desde 3 letras, 450 ms después de la última tecla)
+    // Búsqueda mientras escribe (desde 3 letras; con índice local casi sin espera, en vivo 450 ms)
     LaunchedEffect(query) {
         val q = query.trim()
         if (q.length < 3) return@LaunchedEffect
-        delay(450)
+        delay(if (TokenIndex.ready) 150 else 450)
         if (q != lastSearched) doSearch(q)
     }
 
