@@ -75,19 +75,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.graphics.drawable.toBitmap
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.ImageRequest
+import coil.request.SuccessResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
 
 private val Ink = Color(0xFF1B1B1F)
 private val Field = Color(0xFF2A2A30)
@@ -95,6 +101,13 @@ private val Parchment = Color(0xFFF2EDE1)
 private val Crimson = Color(0xFF7A1F2B)
 private val Muted = Color(0xFF8B8578)
 private val CardText = Color(0xFF2A2622)
+private val CardSubtext = Color(0xFF5E584C)
+
+/** Botón principal en carmesí (el primary del tema es claro para que textos y bordes se lean sobre fondo oscuro). */
+@Composable
+private fun crimsonButton() = ButtonDefaults.buttonColors(containerColor = Crimson, contentColor = Parchment)
+
+private val CompactPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,7 +116,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
-                    primary = Crimson, onPrimary = Parchment,
+                    primary = Parchment, onPrimary = Ink,
                     background = Ink, onBackground = Parchment,
                     surface = Ink, onSurface = Parchment,
                     surfaceVariant = Field, onSurfaceVariant = Parchment,
@@ -204,7 +217,7 @@ fun App() {
                 busy = "Preparando..."
                 try {
                     val bw = withContext(Dispatchers.IO) {
-                        val src = entry.bitmap ?: Scryfall.downloadBitmap(entry.fullUrl!!)
+                        val src = entry.bitmap ?: loadCached(ctx, entry.fullUrl!!)
                         Thermal.dither(Thermal.compose(src, Thermal.labelFor(entry)))
                     }
                     if (share) {
@@ -249,11 +262,19 @@ fun App() {
                 )
                 Spacer(Modifier.size(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { showCustom = true }, modifier = Modifier.weight(1f)) {
-                        Text("Token personalizado", maxLines = 1)
+                    OutlinedButton(
+                        onClick = { showCustom = true },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = CompactPadding,
+                    ) {
+                        Text("Token personalizado", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    OutlinedButton(onClick = { withBluetooth { showPrinters = true } }, modifier = Modifier.weight(1f)) {
-                        Text(printer?.name ?: "Elegir impresora", maxLines = 1)
+                    OutlinedButton(
+                        onClick = { withBluetooth { showPrinters = true } },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = CompactPadding,
+                    ) {
+                        Text("🖨 " + (printer?.name ?: "Elegir impresora"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -325,7 +346,7 @@ private fun TokenCard(entry: TokenEntry, onClick: () -> Unit) {
         )
         Column(Modifier.padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 10.dp)) {
             Text(entry.name, color = CardText, fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            Text(entry.setName.uppercase(), color = Muted, fontSize = 11.sp)
+            Text(entry.setName.uppercase(), color = CardSubtext, fontSize = 11.sp)
         }
     }
 }
@@ -345,7 +366,11 @@ private fun Viewer(entry: TokenEntry, busy: String?, onPrint: () -> Unit, onShar
             if (entry.bitmap != null) {
                 Image(entry.bitmap.asImageBitmap(), entry.name, modifier = imageModifier)
             } else {
-                AsyncImage(model = entry.fullUrl, contentDescription = entry.name, modifier = imageModifier)
+                // La miniatura ya está en caché: se ve al instante y la grande la reemplaza al llegar
+                Box(imageModifier.aspectRatio(5f / 7f)) {
+                    AsyncImage(model = entry.thumbUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                    AsyncImage(model = entry.fullUrl, contentDescription = entry.name, modifier = Modifier.fillMaxSize())
+                }
             }
             Text(
                 entry.name, color = Parchment, fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold,
@@ -354,11 +379,17 @@ private fun Viewer(entry: TokenEntry, busy: String?, onPrint: () -> Unit, onShar
             Text(entry.setName, color = Muted, fontSize = 13.sp)
             Spacer(Modifier.size(20.dp))
             Row(Modifier.widthIn(max = 420.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onPrint, enabled = busy == null, modifier = Modifier.weight(2f)) {
-                    Text(busy ?: "Imprimir", fontWeight = FontWeight.SemiBold)
+                Button(
+                    onClick = onPrint, enabled = busy == null, colors = crimsonButton(),
+                    modifier = Modifier.weight(1f), contentPadding = CompactPadding,
+                ) {
+                    Text(busy ?: "Imprimir", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                OutlinedButton(onClick = onShare, enabled = busy == null, modifier = Modifier.weight(1f)) {
-                    Text("Compartir")
+                OutlinedButton(
+                    onClick = onShare, enabled = busy == null,
+                    modifier = Modifier.weight(1f), contentPadding = CompactPadding,
+                ) {
+                    Text("Compartir", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -425,7 +456,7 @@ private fun CustomTokenDialog(onDismiss: () -> Unit, onCreate: (TokenEntry) -> U
                     }
                     onCreate(TokenEntry(n, "Token personalizado", colors.toList(), isEmblem, false, bitmap = bmp))
                 }
-            }) { Text("Generar") }
+            }, colors = crimsonButton()) { Text("Generar") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
     )
@@ -468,12 +499,20 @@ private fun PrinterDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onTest, enabled = current != null && busy == null) {
+            Button(onClick = onTest, enabled = current != null && busy == null, colors = crimsonButton()) {
                 Text(busy ?: "Imprimir prueba")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Listo") } },
     )
+}
+
+/** Usa la caché de Coil (la misma imagen que se ve en el visor) en vez de descargarla de nuevo. */
+private suspend fun loadCached(ctx: Context, url: String): Bitmap {
+    val request = ImageRequest.Builder(ctx).data(url).allowHardware(false).build()
+    val result = ctx.imageLoader.execute(request)
+    return (result as? SuccessResult)?.drawable?.toBitmap()
+        ?: throw IOException("No se pudo descargar la imagen. Revisa tu conexión.")
 }
 
 /** Respaldo: comparte el PNG ya procesado (por ejemplo a RawBT). */

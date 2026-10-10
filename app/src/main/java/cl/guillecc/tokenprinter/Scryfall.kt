@@ -1,7 +1,10 @@
 package cl.guillecc.tokenprinter
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -27,7 +30,7 @@ data class TokenEntry(
 /** Cliente mínimo de la API de Scryfall (llamar desde un hilo de IO). */
 object Scryfall {
     private const val BASE =
-        "(type:token or type:emblem or type:card) -layout:art_series -is:minigame " +
+        "(type:token or type:emblem or type:card) -layout:art_series -layout:front_card -is:minigame " +
             "-set:wc97 -set:wc98 -set:wc99 -set:wc00 -set:wc01 -set:wc02 -set:wc03 -set:wc04"
 
     const val DEFAULT_STATUS = "Busca un token de Magic para ver sus versiones."
@@ -66,22 +69,27 @@ object Scryfall {
             "${newest.optString("set_name")} (${newest.optString("released_at")})"
     }
 
-    fun search(q: String): List<TokenEntry> {
+    /** Las dos consultas van en paralelo; la de reminder es opcional y no bloquea si falla. */
+    suspend fun search(q: String): List<TokenEntry> = coroutineScope {
         val query = "$BASE $q"
-        val data = try {
-            getJson(searchUrl(query, "&unique=prints&order=name"))
-        } catch (e: NotFound) {
-            return emptyList()
-        }
         // Cartas etiquetadas "reminder card" en Scryfall Tagger. Si falla, seguimos sin ese dato.
-        val reminderIds = try {
-            val r = getJson(searchUrl("$query otag:reminder-card", "&unique=prints")).optJSONArray("data")
-            (0 until (r?.length() ?: 0)).map { r!!.getJSONObject(it).optString("id") }.toSet()
-        } catch (e: Exception) {
-            emptySet()
+        val reminders = async(Dispatchers.IO) {
+            try {
+                val r = getJson(searchUrl("$query otag:reminder-card", "&unique=prints")).optJSONArray("data")
+                (0 until (r?.length() ?: 0)).map { r!!.getJSONObject(it).optString("id") }.toSet()
+            } catch (e: Exception) {
+                emptySet()
+            }
         }
-        val cards = data.optJSONArray("data") ?: return emptyList()
-        return (0 until cards.length()).flatMap { entries(cards.getJSONObject(it), reminderIds) }
+        val data = try {
+            withContext(Dispatchers.IO) { getJson(searchUrl(query, "&unique=prints&order=name")) }
+        } catch (e: NotFound) {
+            reminders.cancel()
+            return@coroutineScope emptyList()
+        }
+        val reminderIds = reminders.await()
+        val cards = data.optJSONArray("data") ?: return@coroutineScope emptyList()
+        (0 until cards.length()).flatMap { entries(cards.getJSONObject(it), reminderIds) }
     }
 
     private fun entries(card: JSONObject, reminderIds: Set<String>): List<TokenEntry> {
@@ -126,17 +134,6 @@ object Scryfall {
                 fullUrl = full,
             )
         )
-    }
-
-    fun downloadBitmap(url: String): Bitmap {
-        val conn = open(url)
-        try {
-            if (conn.responseCode !in 200..299) throw IOException("No se pudo descargar la imagen (HTTP ${conn.responseCode})")
-            return conn.inputStream.use { BitmapFactory.decodeStream(it) }
-                ?: throw IOException("Imagen inválida")
-        } finally {
-            conn.disconnect()
-        }
     }
 
     private fun String.isReminderType() = trim().equals("card", ignoreCase = true)
