@@ -52,7 +52,7 @@ object TokenIndex {
     /** Mensaje de "última edición" según el índice, o null si no hay índice. */
     fun freshness(): String? = index?.status
 
-    /** Búsqueda local por nombre/tipo (sin acentos ni mayúsculas), ordenada por nombre. Null si no hay índice. */
+    /** Búsqueda local por nombre, como la de Scryfall (sin acentos ni mayúsculas), ordenada por nombre. Null si no hay índice. */
     fun search(q: String): List<TokenEntry>? {
         val idx = index ?: return null
         val words = normalize(q).split(' ').filter { it.isNotEmpty() }
@@ -69,7 +69,7 @@ object TokenIndex {
             val c = arr.getJSONObject(i)
             val faces = c.getJSONArray("f")
             Card(
-                search = normalize(c.optString("n") + " " + c.optString("t")),
+                search = normalize(c.optString("n")),
                 entries = (0 until faces.length()).map { j ->
                     val e = faces.getJSONObject(j)
                     val u = e.optString("u")
