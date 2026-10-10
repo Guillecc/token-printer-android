@@ -56,7 +56,10 @@ object TokenIndex {
     fun search(q: String): List<TokenEntry>? {
         val idx = index ?: return null
         val words = normalize(q).split(' ').filter { it.isNotEmpty() }
-        return idx.cards.filter { c -> words.all { it in c.search } }.flatMap { it.entries }
+        fun TokenEntry.matches() = normalize(name).let { n -> words.all { it in n } }
+        // En tokens dobles solo se muestran las caras que coinciden (si ninguna coincide sola, ambas).
+        return idx.cards.filter { c -> words.all { it in c.search } }
+            .flatMap { c -> c.entries.filter { it.matches() }.ifEmpty { c.entries } }
     }
 
     private fun normalize(s: String) =
