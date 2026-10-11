@@ -17,7 +17,6 @@ object Thermal {
     private const val TOP_MARGIN = 1 * DPMM    // 1 mm
     private const val BOTTOM_MARGIN = 11 * DPMM // 11 mm, para cortar cómodo
     private const val LABEL_H = 30
-    const val DEFAULT_BRIGHTNESS = 1.05f
 
     /** Identidad de color legible, siempre en orden W-U-B-R-G. */
     fun colorLabel(colors: List<String>): String {
@@ -31,13 +30,10 @@ object Thermal {
         else -> colorLabel(e.colors)
     }
 
-    /**
-     * Escala la imagen al ancho del papel (o a una fracción, centrada, con [scale] < 1),
-     * la pasa a gris con contraste y agrega la etiqueta abajo.
-     */
-    fun compose(src: Bitmap, label: String?, scale: Float = 1f, brightness: Float = DEFAULT_BRIGHTNESS): Bitmap {
-        val contentW = ((WIDTH - SIDE_MARGIN * 2) * scale).roundToInt()
-        val left = ((WIDTH - contentW) / 2).toFloat()
+    /** Escala la imagen al ancho del papel, la pasa a gris con contraste y agrega la etiqueta abajo. */
+    fun compose(src: Bitmap, label: String?): Bitmap {
+        val contentW = WIDTH - SIDE_MARGIN * 2
+        val left = SIDE_MARGIN.toFloat()
         val contentH = (src.height * contentW.toFloat() / src.width).roundToInt()
         val labelH = if (label != null) LABEL_H else 0
         val out = Bitmap.createBitmap(WIDTH, TOP_MARGIN + contentH + labelH + BOTTOM_MARGIN, Bitmap.Config.ARGB_8888)
@@ -46,7 +42,7 @@ object Thermal {
 
         val soft = if (src.config == Bitmap.Config.HARDWARE) src.copy(Bitmap.Config.ARGB_8888, false) else src
         val scaled = Bitmap.createScaledBitmap(soft, contentW, contentH, true)
-        c.drawBitmap(tone(scaled, contrast = 1.5f, brightness = brightness), left, TOP_MARGIN.toFloat(), null)
+        c.drawBitmap(tone(scaled, contrast = 1.5f, brightness = 1.05f), left, TOP_MARGIN.toFloat(), null)
 
         if (label != null) {
             val lineY = (TOP_MARGIN + contentH).toFloat()

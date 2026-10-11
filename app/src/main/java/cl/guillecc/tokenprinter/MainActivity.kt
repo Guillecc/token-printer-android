@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -56,7 +57,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -155,8 +155,6 @@ fun App() {
     var printer by remember { mutableStateOf(Printer.saved(ctx)) }
     var busy by remember { mutableStateOf<String?>(null) }
     var series by remember { mutableStateOf<Series?>(null) }
-    var brightness by remember { mutableStateOf(Prefs.brightness(ctx)) }
-    var scale by remember { mutableStateOf(Prefs.scale(ctx)) }
 
     // Permiso "Dispositivos cercanos" (Android 12+): se pide justo antes de usar Bluetooth.
     var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -215,10 +213,10 @@ fun App() {
         if (q != lastSearched) doSearch(q)
     }
 
-    /** Imagen lista para la térmica (B/N), con el tamaño y brillo elegidos. */
+    /** Imagen lista para la térmica (B/N). */
     suspend fun prepare(entry: TokenEntry): Bitmap = withContext(Dispatchers.IO) {
         val src = entry.bitmap ?: loadCached(ctx, entry.fullUrl!!)
-        Thermal.dither(Thermal.compose(src, Thermal.labelFor(entry), scale, brightness))
+        Thermal.dither(Thermal.compose(src, Thermal.labelFor(entry)))
     }
 
     /** Imprime una copia; devuelve false si falló (ya avisado al usuario). */
@@ -371,10 +369,6 @@ fun App() {
             entry = entry,
             busy = busy,
             series = series,
-            brightness = brightness,
-            scale = scale,
-            onBrightness = { brightness = it; Prefs.setBrightness(ctx, it) },
-            onScale = { scale = it; Prefs.setScale(ctx, it) },
             preparePreview = { prepare(entry) },
             onPrint = { copies -> print(entry, copies) },
             onNext = { printNext() },
@@ -449,10 +443,6 @@ private fun Viewer(
     entry: TokenEntry,
     busy: String?,
     series: Series?,
-    brightness: Float,
-    scale: Float,
-    onBrightness: (Float) -> Unit,
-    onScale: (Float) -> Unit,
     preparePreview: suspend () -> Bitmap,
     onPrint: (copies: Int) -> Unit,
     onNext: () -> Unit,
@@ -463,16 +453,15 @@ private fun Viewer(
     var copies by remember { mutableStateOf(1) }
     var showPreview by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf<Bitmap?>(null) }
-    // Recalcula la vista previa al activarla o al cambiar brillo/tamaño (con una pequeña espera mientras se arrastra)
-    LaunchedEffect(showPreview, brightness, scale) {
-        if (!showPreview) return@LaunchedEffect
-        delay(150)
+    // La vista previa se calcula al activarla (una vez por token)
+    LaunchedEffect(showPreview) {
+        if (!showPreview || preview != null) return@LaunchedEffect
         preview = runCatching { preparePreview() }.getOrNull()
     }
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
-            Modifier.fillMaxSize().background(Color(0xF00A0A0C)).verticalScroll(rememberScrollState()).padding(20.dp),
+            Modifier.fillMaxSize().background(Color(0xF00A0A0C)).systemBarsPadding().verticalScroll(rememberScrollState()).padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
@@ -561,27 +550,9 @@ private fun Viewer(
                     }
                 }
 
-                // Ajustes de impresión (se guardan y aplican a todos los tokens)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Vista previa térmica", color = Parchment, modifier = Modifier.weight(1f))
                     Switch(checked = showPreview, onCheckedChange = { showPreview = it })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Tamaño", color = Muted, modifier = Modifier.weight(1f))
-                    listOf("Normal" to Prefs.SCALE_NORMAL, "Compacto" to Prefs.SCALE_COMPACT).forEach { (label, value) ->
-                        OutlinedButton(
-                            onClick = { onScale(value) },
-                            contentPadding = CompactPadding,
-                            colors = if (scale == value) crimsonButton() else ButtonDefaults.outlinedButtonColors(),
-                        ) { Text(label, maxLines = 1) }
-                    }
-                }
-                Column {
-                    Row {
-                        Text("Brillo", color = Muted, modifier = Modifier.weight(1f))
-                        Text("más oscuro ← → más claro", color = Muted, fontSize = 12.sp)
-                    }
-                    Slider(value = brightness, onValueChange = onBrightness, valueRange = 0.8f..1.4f)
                 }
             }
         }

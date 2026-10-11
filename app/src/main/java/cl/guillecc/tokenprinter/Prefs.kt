@@ -4,22 +4,12 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Ajustes de impresión y tokens recientes, guardados en el teléfono. */
+/** Tokens recientes, guardados en el teléfono. */
 object Prefs {
     private const val NAME = "settings"
     private const val MAX_RECENTS = 12
 
-    /** Tamaño del token en el papel: 1 = ancho completo (48 mm), 0.75 = compacto (36 mm). */
-    const val SCALE_NORMAL = 1f
-    const val SCALE_COMPACT = 0.75f
-
     private fun p(ctx: Context) = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
-
-    fun brightness(ctx: Context) = p(ctx).getFloat("brightness", Thermal.DEFAULT_BRIGHTNESS)
-    fun setBrightness(ctx: Context, v: Float) = p(ctx).edit().putFloat("brightness", v).apply()
-
-    fun scale(ctx: Context) = p(ctx).getFloat("scale", SCALE_NORMAL)
-    fun setScale(ctx: Context, v: Float) = p(ctx).edit().putFloat("scale", v).apply()
 
     /** Recientes: solo tokens de Scryfall (los personalizados no se guardan). */
     fun recents(ctx: Context): List<TokenEntry> {

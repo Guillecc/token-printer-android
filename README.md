@@ -38,7 +38,6 @@ una vez y luego instala la nueva (hay que volver a elegir la impresora).
 - **Recientes:** con el buscador vacío se ven los últimos tokens impresos (los personalizados no se guardan).
 - **Filtro de color:** W U B R G y C (incoloro) sobre los resultados o los recientes.
 - **Vista previa térmica:** en el visor, muestra exactamente los puntos que va a imprimir.
-- **Tamaño y brillo:** Normal (48 mm) o Compacto (36 mm, ahorra papel) y un control de brillo; se guardan.
 
 ## Si algo falla
 
@@ -62,5 +61,5 @@ una vez y luego instala la nueva (hay que volver a elegir la impresora).
 
 Archivos principales en `app/src/main/java/cl/guillecc/tokenprinter/`:
 `Scryfall.kt` (búsqueda), `CustomToken.kt` (token personalizado), `Thermal.kt` (escala a 384 px,
-tramado Floyd–Steinberg y ESC/POS), `Printer.kt` (Bluetooth SPP), `TokenIndex.kt` (índice local), `Prefs.kt` (ajustes y recientes),
+tramado Floyd–Steinberg y ESC/POS), `Printer.kt` (Bluetooth SPP), `TokenIndex.kt` (índice local), `Prefs.kt` (recientes),
 `MainActivity.kt` (UI).
