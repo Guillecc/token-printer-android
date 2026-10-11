@@ -54,6 +54,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Slider
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -128,29 +131,39 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Serie de copias en curso: se imprime una, el usuario la corta y toca Siguiente. */
+private class Series(val bw: Bitmap, val name: String, val total: Int, val printed: Int)
+
 @Composable
 fun App() {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
+    fun toast(msg: String) {
+        scope.launch { snackbar.showSnackbar(msg) }
+    }
 
     var query by remember { mutableStateOf("") }
     var lastSearched by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Cargando información...") }
     var results by remember { mutableStateOf<List<TokenEntry>>(emptyList()) }
+    var recents by remember { mutableStateOf(Prefs.recents(ctx)) }
+    val colorFilter = remember { mutableStateListOf<String>() }
     var selected by remember { mutableStateOf<TokenEntry?>(null) }
     var showCustom by remember { mutableStateOf(false) }
     var showPrinters by remember { mutableStateOf(false) }
     var printer by remember { mutableStateOf(Printer.saved(ctx)) }
     var busy by remember { mutableStateOf<String?>(null) }
+    var series by remember { mutableStateOf<Series?>(null) }
+    var brightness by remember { mutableStateOf(Prefs.brightness(ctx)) }
+    var scale by remember { mutableStateOf(Prefs.scale(ctx)) }
 
     // Permiso "Dispositivos cercanos" (Android 12+): se pide justo antes de usar Bluetooth.
     var afterPermission by remember { mutableStateOf<(() -> Unit)?>(null) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val action = afterPermission
         afterPermission = null
-        if (granted) action?.invoke()
-        else scope.launch { snackbar.showSnackbar("Sin el permiso de Dispositivos cercanos no se puede imprimir") }
+        if (granted) action?.invoke() else toast("Sin el permiso de Dispositivos cercanos no se puede imprimir")
     }
     fun withBluetooth(action: () -> Unit) {
         if (Build.VERSION.SDK_INT < 31 ||
@@ -202,45 +215,80 @@ fun App() {
         if (q != lastSearched) doSearch(q)
     }
 
-    fun sendToPrinter(bw: Bitmap, label: String) = scope.launch {
+    /** Imagen lista para la térmica (B/N), con el tamaño y brillo elegidos. */
+    suspend fun prepare(entry: TokenEntry): Bitmap = withContext(Dispatchers.IO) {
+        val src = entry.bitmap ?: loadCached(ctx, entry.fullUrl!!)
+        Thermal.dither(Thermal.compose(src, Thermal.labelFor(entry), scale, brightness))
+    }
+
+    /** Imprime una copia; devuelve false si falló (ya avisado al usuario). */
+    suspend fun printOne(bw: Bitmap): Boolean {
         busy = "Imprimiendo..."
-        try {
+        return try {
             withContext(Dispatchers.IO) { Printer.print(ctx, Thermal.escPos(bw)) }
-            snackbar.showSnackbar("$label enviado a la impresora")
+            true
         } catch (e: Exception) {
-            snackbar.showSnackbar(e.message ?: "Error al imprimir")
+            toast(e.message ?: "Error al imprimir")
+            false
         } finally {
             busy = null
         }
     }
 
-    fun print(entry: TokenEntry, share: Boolean) {
-        if (!share && printer == null) {
+    fun print(entry: TokenEntry, copies: Int) {
+        if (printer == null) {
             withBluetooth { showPrinters = true }
             return
         }
-        val run = {
+        withBluetooth {
             scope.launch {
                 busy = "Preparando..."
-                try {
-                    val bw = withContext(Dispatchers.IO) {
-                        val src = entry.bitmap ?: loadCached(ctx, entry.fullUrl!!)
-                        Thermal.dither(Thermal.compose(src, Thermal.labelFor(entry)))
-                    }
-                    if (share) {
-                        shareImage(ctx, bw, entry.name)
-                        busy = null
-                    } else {
-                        sendToPrinter(bw, entry.name)
-                    }
+                val bw = try {
+                    prepare(entry)
                 } catch (e: Exception) {
                     busy = null
-                    snackbar.showSnackbar(e.message ?: "No se pudo preparar la imagen")
+                    toast(e.message ?: "No se pudo preparar la imagen")
+                    return@launch
+                }
+                if (!printOne(bw)) return@launch
+                recents = Prefs.addRecent(ctx, entry)
+                if (copies > 1) series = Series(bw, entry.name, copies, 1)
+                else toast("${entry.name} enviado a la impresora")
+            }
+        }
+    }
+
+    fun printNext() {
+        val s = series ?: return
+        withBluetooth {
+            scope.launch {
+                if (!printOne(s.bw)) return@launch
+                series = if (s.printed + 1 >= s.total) {
+                    toast("Listas las ${s.total} copias de ${s.name}")
+                    null
+                } else {
+                    Series(s.bw, s.name, s.total, s.printed + 1)
                 }
             }
-            Unit
         }
-        if (share) run() else withBluetooth(run)
+    }
+
+    fun share(entry: TokenEntry) = scope.launch {
+        busy = "Preparando..."
+        try {
+            shareImage(ctx, prepare(entry), entry.name)
+        } catch (e: Exception) {
+            toast(e.message ?: "No se pudo preparar la imagen")
+        } finally {
+            busy = null
+        }
+    }
+
+    // Sin búsqueda se muestran los recientes; el filtro de color aplica a lo que se esté mostrando
+    val showingRecents = query.isBlank()
+    val source = if (showingRecents) recents else results
+    val shown = source.filter { e ->
+        colorFilter.all { c -> if (c == "C") e.colors.isEmpty() else c in e.colors }
     }
 
     Scaffold(
@@ -261,6 +309,9 @@ fun App() {
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     placeholder = { Text("Nombre del token, ej: Zombie, Soldier...") },
+                    trailingIcon = if (query.isNotEmpty()) {
+                        { TextButton(onClick = { query = "" }) { Text("✕", color = Muted) } }
+                    } else null,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = {
                         val q = query.trim()
@@ -284,10 +335,24 @@ fun App() {
                         Text("🖨 " + (printer?.name ?: "Elegir impresora"), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
+                Spacer(Modifier.size(10.dp))
+                // Filtro rápido por color (C = incoloro)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf("W", "U", "B", "R", "G", "C").forEach { c ->
+                        ColorPip(c, active = c in colorFilter, size = 34) {
+                            if (c in colorFilter) colorFilter.remove(c) else colorFilter.add(c)
+                        }
+                    }
+                }
             }
             Text(
-                status, color = Muted, fontSize = 14.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                when {
+                    source.isNotEmpty() && shown.isEmpty() -> "Ningún resultado con esos colores."
+                    showingRecents && recents.isNotEmpty() -> "Recientes"
+                    else -> status
+                },
+                color = Muted, fontSize = 14.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             )
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
@@ -296,7 +361,7 @@ fun App() {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                items(results) { entry -> TokenCard(entry) { selected = entry } }
+                items(shown) { entry -> TokenCard(entry) { selected = entry } }
             }
         }
     }
@@ -305,9 +370,20 @@ fun App() {
         Viewer(
             entry = entry,
             busy = busy,
-            onPrint = { print(entry, share = false) },
-            onShare = { print(entry, share = true) },
-            onClose = { selected = null },
+            series = series,
+            brightness = brightness,
+            scale = scale,
+            onBrightness = { brightness = it; Prefs.setBrightness(ctx, it) },
+            onScale = { scale = it; Prefs.setScale(ctx, it) },
+            preparePreview = { prepare(entry) },
+            onPrint = { copies -> print(entry, copies) },
+            onNext = { printNext() },
+            onStopSeries = { series = null },
+            onShare = { share(entry) },
+            onClose = {
+                selected = null
+                series = null
+            },
         )
     }
 
@@ -331,11 +407,21 @@ fun App() {
             },
             onTest = {
                 val p = printer ?: return@PrinterDialog
-                sendToPrinter(Thermal.dither(Thermal.testPage(p.name)), "Prueba")
+                scope.launch { if (printOne(Thermal.dither(Thermal.testPage(p.name)))) toast("Prueba enviada a la impresora") }
             },
             onDismiss = { showPrinters = false },
         )
     }
+}
+
+@Composable
+private fun ColorPip(c: String, active: Boolean, size: Int = 38, onClick: () -> Unit) {
+    Box(
+        Modifier.size(size.dp)
+            .background(if (active) Crimson else Field, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { Text(c, color = Parchment, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold) }
 }
 
 @Composable
@@ -359,44 +445,143 @@ private fun TokenCard(entry: TokenEntry, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Viewer(entry: TokenEntry, busy: String?, onPrint: () -> Unit, onShare: () -> Unit, onClose: () -> Unit) {
+private fun Viewer(
+    entry: TokenEntry,
+    busy: String?,
+    series: Series?,
+    brightness: Float,
+    scale: Float,
+    onBrightness: (Float) -> Unit,
+    onScale: (Float) -> Unit,
+    preparePreview: suspend () -> Bitmap,
+    onPrint: (copies: Int) -> Unit,
+    onNext: () -> Unit,
+    onStopSeries: () -> Unit,
+    onShare: () -> Unit,
+    onClose: () -> Unit,
+) {
+    var copies by remember { mutableStateOf(1) }
+    var showPreview by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    // Recalcula la vista previa al activarla o al cambiar brillo/tamaño (con una pequeña espera mientras se arrastra)
+    LaunchedEffect(showPreview, brightness, scale) {
+        if (!showPreview) return@LaunchedEffect
+        delay(150)
+        preview = runCatching { preparePreview() }.getOrNull()
+    }
+
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Column(
-            Modifier.fillMaxSize().background(Color(0xF00A0A0C)).padding(20.dp),
+            Modifier.fillMaxSize().background(Color(0xF00A0A0C)).verticalScroll(rememberScrollState()).padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
         ) {
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
                 TextButton(onClick = onClose) { Text("✕", fontSize = 22.sp, color = Parchment) }
             }
-            val imageModifier = Modifier.widthIn(max = 420.dp).heightIn(max = 480.dp)
-            if (entry.bitmap != null) {
-                Image(entry.bitmap.asImageBitmap(), entry.name, modifier = imageModifier)
-            } else {
-                // La miniatura ya está en caché: se ve al instante y la grande la reemplaza al llegar
-                Box(imageModifier.aspectRatio(5f / 7f)) {
-                    AsyncImage(model = entry.thumbUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
-                    AsyncImage(model = entry.fullUrl, contentDescription = entry.name, modifier = Modifier.fillMaxSize())
+            val imageModifier = Modifier.widthIn(max = 420.dp).heightIn(max = 400.dp)
+            when {
+                showPreview -> {
+                    val p = preview
+                    Box(imageModifier.aspectRatio(5f / 7f).background(Color.White), contentAlignment = Alignment.Center) {
+                        if (p != null) {
+                            // Sin suavizado: así se ven los puntos tal como los imprime la térmica
+                            Image(
+                                p.asImageBitmap(), "Vista previa térmica",
+                                filterQuality = FilterQuality.None, modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Text("Generando vista previa...", color = CardText)
+                        }
+                    }
+                }
+                entry.bitmap != null -> Image(entry.bitmap.asImageBitmap(), entry.name, modifier = imageModifier)
+                else -> {
+                    // La miniatura ya está en caché: se ve al instante y la grande la reemplaza al llegar
+                    Box(imageModifier.aspectRatio(5f / 7f)) {
+                        AsyncImage(model = entry.thumbUrl, contentDescription = null, modifier = Modifier.fillMaxSize())
+                        AsyncImage(model = entry.fullUrl, contentDescription = entry.name, modifier = Modifier.fillMaxSize())
+                    }
                 }
             }
             Text(
                 entry.name, color = Parchment, fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold,
-                fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
             )
             Text(entry.setName, color = Muted, fontSize = 13.sp)
-            Spacer(Modifier.size(20.dp))
-            Row(Modifier.widthIn(max = 420.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = onPrint, enabled = busy == null, colors = crimsonButton(),
-                    modifier = Modifier.weight(1f), contentPadding = CompactPadding,
-                ) {
-                    Text(busy ?: "Imprimir", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.size(12.dp))
+
+            Column(Modifier.widthIn(max = 420.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (series != null) {
+                    // Pausa entre copias para cortar con el cortador de la impresora
+                    Text(
+                        "Copia ${series.printed} de ${series.total} impresa. Córtala y toca Siguiente.",
+                        color = Parchment, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = onNext, enabled = busy == null, colors = crimsonButton(),
+                            modifier = Modifier.weight(1f), contentPadding = CompactPadding,
+                        ) {
+                            Text(
+                                busy ?: "Siguiente (${series.printed + 1}/${series.total})",
+                                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onStopSeries, enabled = busy == null,
+                            modifier = Modifier.weight(1f), contentPadding = CompactPadding,
+                        ) { Text("Terminar", maxLines = 1) }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Copias", color = Muted, modifier = Modifier.weight(1f))
+                        OutlinedButton(onClick = { if (copies > 1) copies-- }, contentPadding = CompactPadding) { Text("−") }
+                        Text(
+                            "$copies", color = Parchment, fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 28.dp),
+                        )
+                        OutlinedButton(onClick = { if (copies < 20) copies++ }, contentPadding = CompactPadding) { Text("+") }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(
+                            onClick = { onPrint(copies) }, enabled = busy == null, colors = crimsonButton(),
+                            modifier = Modifier.weight(1f), contentPadding = CompactPadding,
+                        ) {
+                            Text(
+                                busy ?: if (copies > 1) "Imprimir ×$copies" else "Imprimir",
+                                fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = onShare, enabled = busy == null,
+                            modifier = Modifier.weight(1f), contentPadding = CompactPadding,
+                        ) {
+                            Text("Compartir", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
-                OutlinedButton(
-                    onClick = onShare, enabled = busy == null,
-                    modifier = Modifier.weight(1f), contentPadding = CompactPadding,
-                ) {
-                    Text("Compartir", maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+                // Ajustes de impresión (se guardan y aplican a todos los tokens)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Vista previa térmica", color = Parchment, modifier = Modifier.weight(1f))
+                    Switch(checked = showPreview, onCheckedChange = { showPreview = it })
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Tamaño", color = Muted, modifier = Modifier.weight(1f))
+                    listOf("Normal" to Prefs.SCALE_NORMAL, "Compacto" to Prefs.SCALE_COMPACT).forEach { (label, value) ->
+                        OutlinedButton(
+                            onClick = { onScale(value) },
+                            contentPadding = CompactPadding,
+                            colors = if (scale == value) crimsonButton() else ButtonDefaults.outlinedButtonColors(),
+                        ) { Text(label, maxLines = 1) }
+                    }
+                }
+                Column {
+                    Row {
+                        Text("Brillo", color = Muted, modifier = Modifier.weight(1f))
+                        Text("más oscuro ← → más claro", color = Muted, fontSize = 12.sp)
+                    }
+                    Slider(value = brightness, onValueChange = onBrightness, valueRange = 0.8f..1.4f)
                 }
             }
         }
@@ -433,13 +618,7 @@ private fun CustomTokenDialog(onDismiss: () -> Unit, onCreate: (TokenEntry) -> U
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     listOf("W", "U", "B", "R", "G").forEach { c ->
-                        val active = c in colors
-                        Box(
-                            Modifier.size(38.dp)
-                                .background(if (active) Crimson else Field, CircleShape)
-                                .clickable { if (active) colors.remove(c) else colors.add(c) },
-                            contentAlignment = Alignment.Center,
-                        ) { Text(c, color = Parchment, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold) }
+                        ColorPip(c, active = c in colors) { if (c in colors) colors.remove(c) else colors.add(c) }
                     }
                 }
                 OutlinedButton(

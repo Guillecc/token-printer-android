@@ -14,6 +14,8 @@ Versión nativa de [token-printer-app](https://github.com/Guillecc/token-printer
    (Si tienes activo "Protección de seguridad/escaneo de apps" puede pedirte esperar unos segundos.)
 
 Cada versión nueva se instala encima de la anterior con el mismo link.
+**Excepción:** al pasar de la 1.0.5 (o anterior) a la 1.0.6+ cambió la llave de firma: desinstala la versión vieja
+una vez y luego instala la nueva (hay que volver a elegir la impresora).
 
 ## 2. Emparejar la impresora (una sola vez)
 
@@ -28,6 +30,15 @@ Cada versión nueva se instala encima de la anterior con el mismo link.
 3. Toca tu impresora en la lista y luego **Imprimir prueba**.
    Debe salir un ticket con "Token Printer — Impresión de prueba OK" y una barra degradada.
 4. Luego busca un token (ej: `Zombie`), tócalo y presiona **Imprimir**.
+
+## 4. Funciones
+
+- **Copias:** elige cuántas con − / +. Se imprime una, la cortas con el cortador de la impresora y tocas
+  **Siguiente** para la próxima.
+- **Recientes:** con el buscador vacío se ven los últimos tokens impresos (los personalizados no se guardan).
+- **Filtro de color:** W U B R G y C (incoloro) sobre los resultados o los recientes.
+- **Vista previa térmica:** en el visor, muestra exactamente los puntos que va a imprimir.
+- **Tamaño y brillo:** Normal (48 mm) o Compacto (36 mm, ahorra papel) y un control de brillo; se guardan.
 
 ## Si algo falla
 
@@ -45,9 +56,11 @@ Cada versión nueva se instala encima de la anterior con el mismo link.
 - El APK lo compila GitHub Actions en cada push a `main` (`.github/workflows/build.yml`) y lo publica como Release.
 - Para compilar local: JDK 17 + Android SDK, luego `gradle assembleRelease`
   (no hay wrapper en el repo; el CI usa Gradle 8.11.1).
-- `app/debug.keystore` es una llave de prueba incluida a propósito (no es secreta) para que las actualizaciones
-  se instalen encima sin desinstalar.
+- El APK se firma con una llave privada que vive solo en los secretos del repo (`SIGNING_KEYSTORE_B64`,
+  `SIGNING_PASSWORD`) y en un respaldo local fuera del repo. Compilando local sin esas variables sale sin firmar.
+- Las GitHub Actions están fijadas por SHA de commit.
 
 Archivos principales en `app/src/main/java/cl/guillecc/tokenprinter/`:
 `Scryfall.kt` (búsqueda), `CustomToken.kt` (token personalizado), `Thermal.kt` (escala a 384 px,
-tramado Floyd–Steinberg y ESC/POS), `Printer.kt` (Bluetooth SPP), `MainActivity.kt` (UI).
+tramado Floyd–Steinberg y ESC/POS), `Printer.kt` (Bluetooth SPP), `TokenIndex.kt` (índice local), `Prefs.kt` (ajustes y recientes),
+`MainActivity.kt` (UI).

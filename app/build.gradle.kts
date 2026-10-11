@@ -19,24 +19,25 @@ android {
         versionName = "1.0.$buildNumber"
     }
 
-    // Llave fija incluida en el repo (no es secreta): así cada APK nuevo
-    // se instala encima del anterior sin tener que desinstalar.
+    // La llave de firma es privada: GitHub Actions la decodifica desde los secretos del repo.
+    // Sin esas variables (compilación local) el APK release queda sin firmar.
+    val keystorePath = System.getenv("SIGNING_KEYSTORE_PATH")
     signingConfigs {
-        create("shared") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storeType = "pkcs12"
+                storePassword = System.getenv("SIGNING_PASSWORD")
+                keyAlias = "tokenprinter"
+                keyPassword = System.getenv("SIGNING_PASSWORD")
+            }
         }
     }
 
     buildTypes {
-        debug {
-            signingConfig = signingConfigs.getByName("shared")
-        }
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("shared")
+            if (keystorePath != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
